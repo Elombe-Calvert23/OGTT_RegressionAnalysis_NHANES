@@ -1,0 +1,306 @@
+---
+title: "Oral Glucose Tolerance Test Regression Analysis"
+author: "Elombe Calvert"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(MASS)
+library(car)
+```
+[1] *Introduction, Variable Selection*  
+
+                      
+                       ***Research Question***
+
+Does there exist an association between blood glucose levels from the Oral Glucose Tolerance Test (OGTT) used to diagnose diabetes and Age, BMI, Systolic blood pressure, Diastolic blood pressure, income to poverty ratio, total cholesterol, triglycerides, Apolipoprotein, glycosylated hemoglobin and plasma insulin levels? 
+                                    
+                       ***Project Motivation***
+
+Diabetes Mellitus type 2 is a chronic condition in which the body's pancreas does not produce enough insulin or does not use insulin effectively due to acquired insulin resistance. This results in high blood sugar levels, which can damage the body's organs and lead to a range of complications such peripheral neuropathy,diabetic retinopathy, cardiovascular diasese, Nephropathy among others.
+
+Risk factors for diabetes type 2 include being overweight or obese, having high blood pressure, having high levels of lipids (fats) in the blood, being older, having a low income to poverty ratio, having a high BMI (a measure of body fat), and having high levels of glycosylated hemoglobin (a measure of long-term blood sugar control).
+
+The gold standard for diagnosing diabetes is the Oral Glucose Tolerance Test (OGTT). In this test, a person is given a sweet drink containing a specific amount of glucose, and their blood sugar levels are measured at regular intervals over the next two hours.
+
+Thus, in this study, I will use multiple linear regression to investigate the relationship between blood glucose levels from the  OGTT test, and a number of potential predictor variables including blood pressure, lipids, age, income to poverty ratio, Apolipoprotein B, BMI, plasma insulin levels, and glycosylated hemoglobin. By carefully analyzing the strength and direction of the association between these variables, we will be able to determine whether they are significant predictors of OGTT blood glucose levels which can be used in the diagnosis of diabetes. Through this analysis, I aim to provide valuable insights that can improve our understanding of the factors that contribute to diabetes. 
+
+# Subset of NHANES data set 2013-2014
+```{r}
+# Load data file 
+NHANES.file <- read.csv("nhanes_13_14_subset_updated.csv")
+```
+
+# Outcome variable  
+
+[1] (LBXGLT) OGTT blood glucose levels 
+
+# Predictor variables 
+
+[1] (RIDAGEYR) Age                     [10] (BPXSY2) systolic blood Pressure  2
+[2] (INDFMPIR) Income/Poverty Ratio    [11] (BPXSY3) systolic blood Pressure  3
+[3] (BMXBMI  ) Body Mass Index         [12] (BPXDI1) diastolic blood Pressure 1
+[4] (LBXTR   ) Triglycerides           [13] (BPXDI2) diastolic blood Pressure 2
+[5] (LBXTC   ) Total Cholesterol       [14] (BPXDI3) diastolic blood Pressure 3
+[6] (LBXGH   ) Glycosylated hemoglobin [15] (BPXDI4) diastolic blood Pressure 4
+[7] (LBXIN   ) Plasma Insulin             
+[8] (LBXAPB  ) Apolipoprotein B           
+[9] (BPXSY1  ) systolic blood Pressure 1
+
+```{r}
+
+# Selected variables as shown above
+data.set <- NHANES.file %>% dplyr::select(c(RIDAGEYR,INDFMPIR,BMXBMI,BPXSY1,BPXSY2,BPXSY3,BPXSY4,BPXDI1,BPXDI2,BPXDI3,BPXDI4,LBXTR,LBXTC,LBXGH,LBXIN,LBXAPB,LBXGLT))
+
+colnames(data.set)
+```
+
+[2] *Exploratory analysis and QC of the data*
+
+Since OGTT levels is my outcome variable, all patients without this lab value is excluded from the study.
+```{r}
+# Drop rows based on missing values in response variable (OGTT)
+clean.data <- data.set %>% drop_na(LBXGLT)
+```
+
+Due to 'messy' state of the data set the median was used to impute missing continuous values for each variable due to its insensitivity to non-normality and outlier values. This method was chosen over dropping NAs from data set.  
+```{r}
+# Impute missing values using median for predictor variables in data set
+clean.data <- clean.data %>% mutate(across(where(is.numeric), ~replace_na(., median(., na.rm=TRUE))))
+```
+
+In clinical practice a single blood pressure has limited clinical value, thus the decision was made to average the four systolic blood pressures and the four diastolic blood pressures thus condensing to two variables.
+```{r}
+# Merge blood pressures into two variables: Systolic and Diastolic
+BPXSY <- data.frame(BPXSY=rowMeans(clean.data[,c(4:7)]))
+BPXDI <- data.frame(BPXDI=rowMeans(clean.data[,c(8:11)]))
+data  <- cbind(clean.data,BPXSY, BPXDI) %>% dplyr::select(-c(BPXSY1,BPXSY2,BPXSY3,BPXSY4,BPXDI1,BPXDI2,BPXDI3,BPXDI4))
+```
+
+All predictor variables were scaled, where as the independent variable was not. This was done to place each variable on the same scale, mean while leaving the outcome variable unscaled so that the actual fitted values of the model can be interpreted. 
+```{r}
+# Scale independent variables within data set
+data <- scale(data[,c(1:8,10,11)],center = F, scale =T)%>% cbind(.,clean.data$LBXGLT) %>% data.frame(.) %>% 
+mutate(LBXGLT = V11) %>% dplyr::select(-V11)
+```
+
+The collinearity matrix between the variables below showed only reasonably correlated variables: 
+
+- Total Cholesterol and Apolipoprotein B  = 0.86
+- Glycosylated Hemoglobin and OGTT levels = 0.62
+
+```{r}
+# Checking collinearity between predictors
+
+# correlation Matrix
+cor_var <- data.frame(cor(data))
+head(cor_var)
+```
+Scatter plot showing relationships between all variables in data set.
+
+```{r,eval = T, fig.width=8, fig.height=8}
+# Scatter plots of all variables to examine relationships
+plot(data)
+```
+
+Interesting Plots with potential collinearity based on Correlation matrix and scatter plots. 
+```{r,,eval = T, fig.width=5, fig.height=5}
+
+# Glycosylated Hemoglobin vs. OGTT
+plot(data$LBXGH,data$LBXGLT,main = "Glycosylated Hemoglobin vs. OGTT", 
+xlab = "Glycosylated Hemoglobin", ylab = "OGTT", col="red") 
+
+# Total Cholesterol vs. Apolipoprotein B
+plot(data$LBXTC,data$LBXAPB,main = "Total Cholesterol vs. Apolipoprotein B", 
+xlab = "Total Cholesterol", ylab = "Apolipoprotein B", col="blue") 
+
+# BMI vs. Plasma Insulin
+plot(data$BMXBMI,data$LBXIN,main = "BMI vs. Plasma Insulin", 
+xlab = "BMI", ylab = "Plasma Insulin", col="orange")
+```
+
+ [2] *Choose a regression model*
+
+Multiple linear regression is a powerful statistical tool that allows us to examine the relationship between a target variable and multiple predictor variables.
+Thus the goal of the Multiple linear regression models built, will assess the association between the predictors and the outcome variable outlined above.
+
+# The full multiple regression model
+
+This model type was chosen was it will allow fo the relationship between multiple predictor variables and a continuous outcome to be assessed. The full model contains all the predictor variables modelling the outcome, OGTT levels.
+```{r}
+# Model Definition
+full_model <- lm(LBXGLT~., data=data)
+
+# Model summary
+summary(full_model)
+```
+# Evalaute regression assumptions
+
+[A] Multicollinearity
+
+ - VIF is less than 1 : No correlation 
+ - VIF is between 1-5 : Moderate correlation
+ - VIF is above 5     : Severe correlation
+ 
+Variance inflation factor (VIF) is used for detecting the multicollinearity 
+
+From the VIF barplot, only two predictors showed significant multicollinearity, Apolipoprotein and Total cholesterol, which is consistent with findings from our correlation matrix.
+Since the literature has little evidence to support Apolipoprotein as a good predictor/ risk factor for diabetes, it will be dropped from the model.
+
+```{r,eval = T, fig.width=8, fig.height=8}
+
+# create vector of VIF values
+vif_values <- vif(full_model)
+
+# bar cart to display each VIF value
+barplot(vif_values, main = "VIF Values", horiz = T, col = "red")
+
+# Threshold of 2
+abline(v = 2, lwd = 3, lty = 2)  
+
+```
+
+[B] Normality 
+
+From the barplot of the residual values from the model, it can be seen that the residuals are approximately normally distributed with a slight right skew.
+
+```{r,eval = T, fig.width=6, fig.height=6}
+# Extracting fitted values 
+fit_mod = fitted(full_model)
+
+# Extracting residuals
+res_mod = resid(full_model)
+
+# histogram of residual values
+hist(res_mod,main = "Histogram of Residual Values", xlab = "Residual Values", col = "blue")
+
+# Q-Q plot of residuals
+plot(full_model,2)
+```
+[C] Linearity 
+
+This assumption is checked by looking if there exists any pattern seen in the fitted values which is indicated by the shape of the red line in the plot below. It can be seen that the red line is not horizontal but has non-linear shape, thus indicating a non-linear relationship between the outcome variable and the predictors.  
+
+```{r,,eval = T, fig.width=6, fig.height=6}
+
+# Plot fitted values vs Residuals 
+plot(full_model,1)
+
+```
+
+[D] Homoscedasticity
+
+From the Scale-Location plot below, the residuals display Heteroscedasticity which is non-constant variance in the residuals with differing fitted values.
+
+```{r,eval = T, fig.width=5, fig.height=5}
+
+# Scale-Location plot 
+
+plot(full_model,3)
+
+```
+
+[3] *Conduct variable selection*
+
+The base model which only includes the intercept and the full model which has all predictor variables excluding `Apolipoprotein B` is defined. This will reduce the model complexity and allow for more interpretable coefficients.
+
+```{r}
+# Model Definition
+base_model <- lm(LBXGLT~ 1,data=data) 
+full_model <- lm(LBXGLT~., data=data[,c(1:7,9:11)])
+```
+
+In order perform feature selection to construct the most robust model, iterative feature selection is used via stepAIC, backward selection. Thus, starting with a full model containing all the predictors was done, then insignificant predictors are iteratively removed leaving only variables that explain much of the variance in the target variable. This was ideal in this study where the aim is to assess the relationship between predictors and the outcome variable by finding only the features with a significant relationship with the outcome of interest. 
+
+The features selection through this process as being of importance are: 
+Age (RIDAGEYR), BMI (BMXBMI), Triglycerides (LBXTR), Glycosylated hemoglobin (LBXGH), Plasma insulin levels (LBXIN) and Systolic blood pressure(BPXSY) which are all significantly associated with the outcome, OGTT levels. 
+
+```{r}
+# Iterative phase
+stepAIC(full_model,scope =list(lower=base_model,upper=full_model), data=data, direction = "backward")
+```
+
+[4] *Evaluate model fit*
+
+
+The final model contains only 6 out of 10 predictor variables, all of which are statistically significant.
+
+- Age                 (RIDAGEYR)   6.78e-10 ***
+- BMI                 ( BMXBMI )   0.030941 ***
+- Triglycerides       ( LBXTR  )   7.93e-06 *
+- Glycosylated Haem.  ( LBXGH  )   < 2e-16  ***
+- Plasma Insulin      ( LBXIN  )   3.02e-12 ***
+- Systolic BP         ( BPXSY  )   0.000828 ***
+
+```{r}
+# Final Model
+final_model <- lm(formula = LBXGLT ~ RIDAGEYR + BMXBMI + LBXTR + LBXGH + LBXIN + BPXSY, data = data)
+summary(final_model)
+``` 
+
+Plotting the final model's residual values
+
+```{r,eval = T, fig.width=6, fig.height=6}
+
+# Extracting fitted values Height
+fit_model = fitted(final_model)
+
+# Extracting residual values Height
+res_model = resid(final_model)
+
+# Plot fitted values vs Residuals 
+plot(fit_model,res_model, main = "Fitted Values vs Residuals", xlab = "Fitted Values", ylab = "RESIDUALS", col="red")
+```
+In assessing how well the model fits to the data, the  coefficient of determination, also known as R-squared will be evaluated. In the final model, the  R-squared was 0.426. Thus the predictor variables in the final model,RIDAGEYR, BMXBMI, LBXTR, LBXGH, LBXIN and BPXSY was able to explain ~43% of the variance that exists in the outcome variable LBXGLT. 
+
+```{r}
+
+# R-squared value of final model
+summary(final_model)$r.squared
+```
+[5] *Alternative Model*
+
+Of the 6 predictor variable in the final model, only two variables directly relates to blood glucose levels physiologically in the human body. Thus a model will be constructed and evaluated based solely on these two predictor variables which are:
+
+ - Serum Plasma Insulin
+ - Glycosylated Hemoglobin
+```{r}
+
+# Alternative Model
+Alt_model <- lm(LBXGLT~LBXIN+LBXGH, data =data)
+summary(Alt_model)
+```
+
+The metric that will be used to compare both the final model and the alternative model is the Akaike information criterion (AIC), where lower AIC value indicates a better-fitting model.
+```{r}
+ALT_AIC <- AIC(Alt_model)
+FIN_AIC <- AIC(final_model)
+
+paste("The AIC of the alternative model is",round(ALT_AIC,1), "whereas the AIC of the final model is",round(FIN_AIC,1),". Thus, it can be seen that the final model has a lower AIC which means that it is better able to explain the data than the alternative model. The final model is the better model."  )
+```
+
+[6] *Follow-up Analysis*
+
+Hypothesis testing for coefficient(s)
+
+H0 : All of the coefficients in the regression model are equal to zero
+H1 : At least one of the coefficients is significantly different from zero
+
+```{r}
+# Evaluate F-statistic and p value of F statistic
+
+y  <- summary(final_model)
+FS <- y$fstatistic[1]
+PV <- pf(y$fstatistic[1],y$fstatistic[2],y$fstatistic[3],lower.tail=FALSE)
+
+paste("Having an F-statistic of",round(FS,0),"with a signficant p-value of",PV,", we can reject the H0 and accept H1 that atleast one coefficient is significantly different from zero. In essence, atleast one of our predictor variable in our final model has a significant association with our outcome of interest.")
+
+```
+#CONCLUSION:
+
+Multiple linear regression as a statistic method was used to determine significant associations between predictor variables Age, BMI, Triglycerides, Glycosylated Hemoglobin, Plasma insulin levels, Systolic blood pressure and our outcome variable OGTT blood glucose levels. 
+                                  
+                                  ***THE END***
